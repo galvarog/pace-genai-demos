@@ -21,6 +21,8 @@ from prompts_factory import get_prompts
 from llm_factory import get_model_id, get_model_args
 from botocore.config import Config
 import urllib.parse
+import datetime
+
 
 
 config = Config(connect_timeout=5, read_timeout=60, retries={"total_max_attempts": 20, "mode": "adaptive"})
@@ -34,7 +36,7 @@ session_table = ddb_client.Table(CHAT_MESSAGE_HISTORY_TABLE_NAME)
 MAX_HISTORY_LENGTH = 10
 BOT_NAME="Guru"
 
-region = os.environ["AWS_REGION"]
+region = "eu-central-1"
 kendra_index_id = os.environ["KENDRA_INDEX_ID"]
 NO_OF_PASSAGES_PER_PAGE = os.environ["NO_OF_PASSAGES_PER_PAGE"]
 NO_OF_SOURCES_TO_LIST = os.environ["NO_OF_SOURCES_TO_LIST"]
@@ -61,53 +63,78 @@ def get_context(question, jwt_token):
     return kendra_client.retrieve(**kargs)
 
 def lambda_handler(event, context):
+    conversation_id = None  # Initialize conversation_id
+
     try:
         # ConversationId is the SessionId
         body = event.get("body", "{}")
         body = json.loads(body)
+        print("api call:", body)
         
         model_id = body.get("model_id")
         modelId = get_model_id(model_id)
+        #print("Model:", model_id, "Type:", type(model_id))
+
         
         conversation_id = body.get("conversationId")
         jwt_token = body.get("token")
+        #print("SessionID:", jwt_token, "Type:", type(jwt_token))
+
         
         # If frontend does not pass a conversationId, create a new one
         if not conversation_id:
             # This is the start of a new conversation
             conversation_id = uuid.uuid4().hex
         
+        #fetch chat history
+        chat_history = get_chat_history(conversation_id)
+        print("Chat History: ", chat_history)
+
         # Run question through chain
         question = body["question"].strip().replace("?","")
         
+
         # Fetch Kendra Semantic Search results
         relevant_documents = get_context(question, jwt_token)
         source_page_info = get_relevant_doc_names(relevant_documents)
         
-        document_prompt = get_prompts(model_id, question, relevant_documents)
+        document_prompt = get_prompts(model_id, question, relevant_documents, chat_history)
         question_llm_model_args, document_llm_model_args = get_model_args(model_id, document_prompt)
         
         body = json.dumps(document_llm_model_args)
         
         accept = "*/*"
         contentType = "application/json"
-        print(f"modelId={modelId}")
-        
 
-        
         content = bedrock.invoke_model(
             body=body, modelId=modelId, accept=accept, contentType=contentType
         )
         response = json.loads(content.get("body").read())
         
         answer = get_llm_answer(model_id, response)
+
         
+        # Get the current time in a human-readable format
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        #Add item to table
+        new_item = {
+            'Timestamp': timestamp,
+            'SessionId': conversation_id,
+            'modelId': modelId,
+            'Question': question,
+            'Response': answer,
+        }
+
+        session_table.put_item(Item=new_item)
+
 
         body = {
             "source_page": source_page_info if should_source_be_included(answer) else [],
             "answer": answer,
             "conversationId": conversation_id
         }
+        
 
         return {
             "statusCode": 200,
@@ -207,3 +234,21 @@ def get_presigned_url(s3_file_path):
             ExpiresIn=30000
         )
         return response
+        
+def get_chat_history(session_id):
+    response = session_table.query(
+        KeyConditionExpression=boto3.dynamodb.conditions.Key('SessionId').eq(session_id),
+        ScanIndexForward=False,  # False to sort by Timestamp in descending order
+        Limit=5,  # Fetch only the 5 most recent items
+        ProjectionExpression="#Q, #R",  # Use placeholders for actual attribute names
+        ExpressionAttributeNames={
+            "#Q": "Question",  # Placeholder for 'Question'
+            "#R": "Response"   # Placeholder for 'Response' (reserved keyword)
+        }
+    )
+    history = []
+    for item in response.get('Items', []):
+        # Format the question-answer pair
+        qa_pair = f"Q: {item['Question']} A: {item['Response']}"
+        history.append(qa_pair)
+    return history[::-1]  # Reverse to get the history in chronological order

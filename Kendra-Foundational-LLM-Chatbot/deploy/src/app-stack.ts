@@ -403,6 +403,7 @@ export class AppStack extends cdk.Stack {
   private createChatMessageHistoryTable(){
     this.chatMessageHistoryTable = new cdk.aws_dynamodb.Table(this, "ChatMessageHistory", {
       partitionKey: { name: "SessionId", type: cdk.aws_dynamodb.AttributeType.STRING },
+      sortKey: { name: "Timestamp", type: cdk.aws_dynamodb.AttributeType.STRING },
       encryption: cdk.aws_dynamodb.TableEncryption.AWS_MANAGED,
       billingMode: cdk.aws_dynamodb.BillingMode.PAY_PER_REQUEST,
       removalPolicy: RemovalPolicy.DESTROY
@@ -484,7 +485,7 @@ export class AppStack extends cdk.Stack {
       new cdk.aws_iam.PolicyStatement({
       actions: ["bedrock:InvokeModel"],
       resources: [
-        `arn:aws:bedrock:${this.awsRegion}::foundation-model/*` // Need access to all Foundational Models
+        `arn:aws:bedrock:eu-central-1::foundation-model/*` // Need access to all Foundational Models
       ],
     }))
   }

@@ -7,11 +7,11 @@ from prompts.claude_prompts import get_claude_document_prompt
 from prompts.jurassic_prompts import get_jurassic_document_prompt
 
 
-def get_prompts(model_id, question, context):
+def get_prompts(model_id, question, context, chat_history):
     if model_id == "Amazon-Titan-Large":
         return get_titan_document_prompt(question, context)
     elif model_id == "Anthropic-Claude-V2":
-        return get_claude_document_prompt(question, context)
+        return get_claude_document_prompt(question, context, chat_history)
     elif model_id == "AI21-Jurassic-2-Ultra":
         return get_jurassic_document_prompt(question, context)
     else:
